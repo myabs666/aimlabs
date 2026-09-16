@@ -9,13 +9,18 @@ class Detector:
 
     def detect(self, frame):
         cfg = self.config
-        hsv = cv2.cvtColor(frame.image, cv2.COLOR_BGR2HSV)
+        source = frame.image
+        width = source.shape[1]
+        scale = min(1.0, cfg.detection_max_width / width) if cfg.detection_max_width else 1.0
+        working = (cv2.resize(source, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                   if scale < 1.0 else source)
+        hsv = cv2.cvtColor(working, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, np.array(cfg.hsv_low, dtype=np.uint8), np.array(cfg.hsv_high, dtype=np.uint8))
         # HUD exclusions are measured against the whole client, not against the cropped ROI.
-        height = frame.image.shape[0]
+        height = working.shape[0]
         offset_y = frame.client_size[1] / 2 - frame.center[1]
-        top = max(0, min(height, int(frame.client_size[1] * cfg.exclude_top_fraction - offset_y)))
-        bottom = max(0, min(height, int(frame.client_size[1] * (1 - cfg.exclude_bottom_fraction) - offset_y)))
+        top = max(0, min(height, int((frame.client_size[1] * cfg.exclude_top_fraction - offset_y) * scale)))
+        bottom = max(0, min(height, int((frame.client_size[1] * (1 - cfg.exclude_bottom_fraction) - offset_y) * scale)))
         mask[:top] = 0
         mask[bottom:] = 0
         # Close small crosshair holes; no erosion, which would erase Sixshot-sized targets.
@@ -23,17 +28,19 @@ class Detector:
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         targets = []
         for contour in contours:
-            area = cv2.contourArea(contour)
+            working_area = cv2.contourArea(contour)
+            area = working_area / (scale * scale)
             if area < cfg.min_area:
                 continue
             perimeter = cv2.arcLength(contour, True)
             if perimeter <= 0:
                 continue
-            circularity = 4 * np.pi * area / perimeter ** 2
-            (x, y), radius = cv2.minEnclosingCircle(contour)
+            circularity = 4 * np.pi * working_area / perimeter ** 2
+            (working_x, working_y), working_radius = cv2.minEnclosingCircle(contour)
+            x, y, radius = working_x / scale, working_y / scale, working_radius / scale
             if radius <= 0:
                 continue
-            fill = area / (np.pi * radius ** 2)
+            fill = working_area / (np.pi * working_radius ** 2)
             bx, by, bw, bh = cv2.boundingRect(contour)
             if bx <= 0 or by <= 0 or bx + bw >= mask.shape[1] or by + bh >= mask.shape[0]:
                 continue  # A cropped circle has an unreliable center.
@@ -45,7 +52,7 @@ class Detector:
                 continue
             # Two or more touching cyan discs form one non-circular contour. Distance
             # transform maxima recover their individual centers without a trained model.
-            split = self._split_touching(contour, mask)
+            split = self._split_touching(contour, mask, scale)
             if len(split) >= 2:
                 targets.extend(split)
                 continue
@@ -57,7 +64,7 @@ class Detector:
                 targets.append(Target(float(x), float(y), float(radius), float(area), .45))
         return sorted(targets, key=lambda t: t.distance(frame.center)), mask
 
-    def _split_touching(self, contour, mask):
+    def _split_touching(self, contour, mask, scale=1.0):
         cfg = self.config
         x, y, width, height = cv2.boundingRect(contour)
         if width < 5 or height < 5:
@@ -77,15 +84,15 @@ class Detector:
                 continue
             component = np.where(labels == label, distance, 0)
             peak_y, peak_x = np.unravel_index(int(component.argmax()), component.shape)
-            radius = float(component[peak_y, peak_x])
+            radius = float(component[peak_y, peak_x]) / scale
             estimated_area = float(np.pi * radius * radius)
             if not cfg.min_area <= estimated_area <= cfg.max_area:
                 continue
             # Weighted core centroid is steadier than an arbitrary maximum on a plateau.
             weights = component[labels == label]
             coords_y, coords_x = np.nonzero(labels == label)
-            center_x = float(np.average(coords_x, weights=weights)) + x
-            center_y = float(np.average(coords_y, weights=weights)) + y
+            center_x = (float(np.average(coords_x, weights=weights)) + x) / scale
+            center_y = (float(np.average(coords_y, weights=weights)) + y) / scale
             result.append(Target(center_x, center_y, radius, estimated_area, .9))
         return result
 

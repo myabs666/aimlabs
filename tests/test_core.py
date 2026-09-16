@@ -23,6 +23,18 @@ def frame(sequence=1, timestamp=1.0, size=(800, 600)):
 
 
 class DetectionTests(unittest.TestCase):
+    def test_scaled_detection_maps_centers_back_to_full_resolution(self):
+        image = np.zeros((1800, 2880, 3), np.uint8)
+        for point in ((500, 500), (1440, 900), (2400, 1200)):
+            cv2.circle(image, point, 100, (255, 220, 0), -1)
+        full = Frame(image, 1.0, 1, (1440, 900), (2880, 1800))
+        targets, mask = Detector(Config(detection_max_width=720)).detect(full)
+        self.assertEqual(mask.shape[1], 720)
+        self.assertEqual(len(targets), 3)
+        found = sorted((round(target.x), round(target.y)) for target in targets)
+        expected = [(500, 500), (1440, 900), (2400, 1200)]
+        self.assertTrue(all(math.hypot(x - ex, y - ey) <= 3 for (x, y), (ex, ey) in zip(found, expected)))
+
     def test_circles_reject_noise_rectangle_hud_and_cropped_target(self):
         f = frame()
         color = (255, 220, 0)
@@ -65,7 +77,7 @@ class DetectionTests(unittest.TestCase):
 
 class ControlTests(unittest.TestCase):
     def setUp(self):
-        self.c = Controller(settings())
+        self.c = Controller(settings(mode="baseline", stable_frames=2))
         self.c.arm()
         self.center = Target(400, 300, 12, 400)
 
@@ -113,6 +125,14 @@ class ControlTests(unittest.TestCase):
     def test_uncalibrated_cannot_arm(self):
         with self.assertRaises(ValueError):
             Controller(Config()).arm()
+
+    def test_direct_mode_uses_single_stable_and_result_frame(self):
+        controller = Controller(settings(mode="direct", stable_frames=1))
+        controller.arm()
+        self.assertEqual(controller.update(frame(), [self.center], 1).kind, "click")
+        action = controller.update(frame(2, 1.04), [], 1.04)
+        self.assertEqual(controller.disappearances, 1)
+        self.assertEqual(action.kind, "none")
 
 
 class CalibrationTests(unittest.TestCase):
@@ -197,7 +217,7 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(result["hits"], 6)
             self.assertEqual(result["shots"], 6)
             if mode == "direct":
-                self.assertLessEqual(result["moves"], 12)
+                self.assertEqual(result["moves"], result["hits"])
 
     def test_low_speed_learning_remeasures_each_axis(self):
         cfg = settings(learning_hits=4, learning_settle_ms=1, shot_cooldown_ms=20,

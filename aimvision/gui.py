@@ -86,6 +86,8 @@ def launch(config_path):
             messagebox.showinfo("低速闭环学习", "请先完成基础校准，再进入静止圆靶任务。切回游戏按 F8 后，程序会低速瞄准并打 8 个靶。\n\n每次只移动一个轴的一小段，等待新画面后二次识别同一靶，并据此修正 X/Y 灵敏度。完成后自动保存，再使用高速控制。F9 可中止且不会保存未完成学习。", parent=root)
         args = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-B", str(ROOT / "run.py")]
         args += [command, "--config", str(config_path)]
+        if command == "run":
+            args.append("--headless")
         current_log = local_path(f"logs/launcher-{datetime.now():%Y%m%d-%H%M%S-%f}.txt")
         current_log.parent.mkdir(parents=True, exist_ok=True)
         output_file = current_log.open("w", encoding="utf-8")

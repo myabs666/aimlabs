@@ -25,6 +25,7 @@ class Config:
     roi_size: int = 0
     capture_hz: int = 120
     preview_hz: int = 20
+    detection_max_width: int = 720
     hsv_low: list[int] = field(default_factory=lambda: [75, 90, 90])
     hsv_high: list[int] = field(default_factory=lambda: [115, 255, 255])
     min_area: float = 12.0
@@ -47,19 +48,19 @@ class Config:
     learning_settle_ms: float = 90.0
     learning_stall_timeout_ms: float = 3000.0
     mode: str = "direct"
-    gain: float = 0.95
-    max_step_counts: int = 700
+    gain: float = 1.0
+    max_step_counts: int = 1400
     max_speed: float = 2400.0
     max_acceleration: float = 18000.0
-    move_settle_ms: float = 25.0
+    move_settle_ms: float = 8.0
     max_frame_age_ms: float = 80.0
     stale_pause_ms: float = 500.0
-    aim_radius_fraction: float = 0.35
-    stable_frames: int = 2
-    click_hold_ms: float = 20.0
-    shot_cooldown_ms: float = 120.0
-    result_timeout_ms: float = 400.0
-    ghost_ms: float = 120.0
+    aim_radius_fraction: float = 0.65
+    stable_frames: int = 1
+    click_hold_ms: float = 2.0
+    shot_cooldown_ms: float = 35.0
+    result_timeout_ms: float = 180.0
+    ghost_ms: float = 50.0
     lock_distance_px: float = 100.0
     lock_timeout_ms: float = 1800.0
     max_shots_per_target: int = 2
@@ -71,10 +72,12 @@ class Config:
                 raise ValueError(f"{f.name} must be finite")
         if not self.window_title.strip() or not self.process_names or any(not isinstance(x, str) or not x.endswith('.exe') for x in self.process_names):
             raise ValueError("A game window title and executable names are required")
-        for name in ("device_idx", "output_idx", "roi_size", "capture_hz", "preview_hz", "calibration_probe_counts", "learning_hits", "learning_max_step_counts", "learning_fast_max_step_counts", "max_step_counts", "stable_frames", "max_shots_per_target"):
+        for name in ("device_idx", "output_idx", "roi_size", "capture_hz", "preview_hz", "detection_max_width", "calibration_probe_counts", "learning_hits", "learning_max_step_counts", "learning_fast_max_step_counts", "max_step_counts", "stable_frames", "max_shots_per_target"):
             if type(getattr(self, name)) is not int:
                 raise ValueError(f"{name} must be an integer")
-        if self.device_idx < 0 or self.output_idx < 0 or (self.roi_size != 0 and self.roi_size < 64):
+        if (self.device_idx < 0 or self.output_idx < 0 or
+                (self.roi_size != 0 and self.roi_size < 64) or
+                (self.detection_max_width != 0 and self.detection_max_width < 320)):
             raise ValueError("Invalid capture device / ROI")
         if not 1 <= self.capture_hz <= 500 or not 1 <= self.preview_hz <= 60:
             raise ValueError("Capture Hz must be 1..500, preview Hz 1..60")
@@ -104,7 +107,7 @@ class Config:
         if self.stale_pause_ms < self.max_frame_age_ms:
             raise ValueError("stale_pause must be >= max_frame_age")
         if (self.calibration_probe_counts > 200 or self.learning_max_step_counts > 100 or
-                self.learning_fast_max_step_counts > 400 or self.max_step_counts > 1000 or
+                self.learning_fast_max_step_counts > 400 or self.max_step_counts > 2000 or
                 self.learning_fast_max_step_counts < self.learning_max_step_counts or
                 self.learning_fast_gain < self.learning_gain):
             raise ValueError("Mouse steps exceed supported limits")

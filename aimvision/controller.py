@@ -65,7 +65,8 @@ class Controller:
         if self.state == "WAIT_RESULT":
             nearby = [t for t in targets if t.distance((self.selected.x, self.selected.y)) < max(6, self.selected.radius * .65)]
             self.missing = self.missing + 1 if not nearby else 0
-            if self.missing >= 2:
+            required_missing = 1 if cfg.mode == "direct" else 2
+            if self.missing >= required_missing:
                 self.disappearances += 1
                 self.ghost = (self.selected.x, self.selected.y, max(8, self.selected.radius * 1.6), now + cfg.ghost_ms / 1000)
                 self._drop_lock()
