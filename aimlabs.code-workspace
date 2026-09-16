@@ -1,0 +1,15 @@
+{
+  // 双击本文件即可用 VSCode 打开整个工程(这就是工程快捷方式)。
+  "folders": [
+    {
+      "name": "aimlabs",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.analysis.stubPath": "C:\\Users\\26844\\.kendryte\\k230_canmv_pylance\\243ea76cecc836e5\\typings",
+    "python.analysis.extraPaths": [
+      "C:\\Users\\26844\\.kendryte\\k230_canmv_stubs\\33c44c82f482c4fd80ea9fde8b81700a5ed592d7"
+    ]
+  },
+  }

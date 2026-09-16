@@ -1,0 +1,61 @@
+{
+  "window_title": "aimlab",
+  "process_names": [
+    "aimlab_tb.exe",
+    "aimlab.exe"
+  ],
+  "device_idx": 0,
+  "output_idx": 0,
+  "roi_size": 0,
+  "capture_hz": 120,
+  "preview_hz": 20,
+  "hsv_low": [
+    75,
+    90,
+    90
+  ],
+  "hsv_high": [
+    115,
+    255,
+    255
+  ],
+  "min_area": 12.0,
+  "max_area": 100000.0,
+  "min_circularity": 0.55,
+  "min_fill": 0.5,
+  "exclude_top_fraction": 0.08,
+  "exclude_bottom_fraction": 0.08,
+  "horizontal_fov": 103.0,
+  "counts_per_radian_x": 0.0,
+  "counts_per_radian_y": 0.0,
+  "calibrated_size": [
+    0,
+    0
+  ],
+  "calibration_probe_counts": 40,
+  "calibration_settle_ms": 180.0,
+  "learning_hits": 8,
+  "learning_gain": 0.45,
+  "learning_max_step_counts": 30,
+  "learning_fast_gain": 0.95,
+  "learning_fast_max_step_counts": 180,
+  "learning_settle_ms": 90.0,
+  "learning_stall_timeout_ms": 3000.0,
+  "mode": "direct",
+  "gain": 0.95,
+  "max_step_counts": 700,
+  "max_speed": 2400.0,
+  "max_acceleration": 18000.0,
+  "move_settle_ms": 25.0,
+  "max_frame_age_ms": 80.0,
+  "stale_pause_ms": 500.0,
+  "aim_radius_fraction": 0.35,
+  "stable_frames": 2,
+  "click_hold_ms": 20.0,
+  "shot_cooldown_ms": 120.0,
+  "result_timeout_ms": 400.0,
+  "ghost_ms": 120.0,
+  "lock_distance_px": 100.0,
+  "lock_timeout_ms": 1800.0,
+  "max_shots_per_target": 2
+}
