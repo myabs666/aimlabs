@@ -1,3 +1,6 @@
+import itertools
+import math
+
 from .model import Action
 from .motion import Motion, pixel_angles, project_angles
 
@@ -28,6 +31,12 @@ class Controller:
         self.moves_on_lock = 0
         self.fire_enabled_at = 0.0
         self.countdown_active = False
+        self.view_angles = [0.0, 0.0]
+        self.saved_route = []
+        self.pending_shots = []
+        self.end_guard_at = float("inf")
+        self.unresponsive_moves = 0
+        self.last_clicked = None
         self.motion.reset()
 
     def arm(self):
@@ -41,11 +50,34 @@ class Controller:
         """Allow aiming immediately, but suppress task shots until the countdown ends."""
         self.fire_enabled_at = now + self.cfg.start_countdown_ms / 1000
         self.countdown_active = True
+        self.end_guard_at = self.fire_enabled_at + self.cfg.end_guard_after_ms / 1000
         self.wait_until = now + max(self.cfg.click_hold_ms, self.cfg.shot_cooldown_ms) / 1000
         self.state = "COUNTDOWN"
 
-    def _shoot(self, now, reason=""):
-        self.state = "WAIT_RESULT"
+    def set_end_guard(self, timestamp):
+        self.end_guard_at = timestamp
+
+    def _global_angles(self, target, frame):
+        yaw, pitch = pixel_angles((target.x, target.y), frame.center,
+                                  frame.client_size[0], self.cfg.horizontal_fov)
+        return self.view_angles[0] + yaw, self.view_angles[1] + pitch
+
+    def _shoot(self, now, frame, reason=""):
+        self.last_clicked = self.selected
+        if self.cfg.mode == "direct":
+            position = self._global_angles(self.selected, frame)
+            # A delayed retry replaces the older pending observation at the same
+            # direction instead of creating two verification records.
+            self.pending_shots = [shot for shot in self.pending_shots
+                                  if self._count_distance(shot[0], position) > self.cfg.lock_distance_px]
+            self.pending_shots.append([position, self.selected.radius, now, 0])
+            self.selected = None
+            self.predicted = None
+            self.pending_move = None
+            self.moves_on_lock = 0
+            self.state = "PIPELINE"
+        else:
+            self.state = "WAIT_RESULT"
         self.last_shot = now
         self.wait_until = now + max(self.cfg.click_hold_ms, self.cfg.shot_cooldown_ms) / 1000
         self.attempts += 1
@@ -66,6 +98,7 @@ class Controller:
         self.missing = 0
         self.pending_move = None
         self.moves_on_lock = 0
+        self.saved_route = []
         self.motion.reset()
         self.state = "SEEK"
 
@@ -83,6 +116,7 @@ class Controller:
             progress = (observed_dx * expected_dx + observed_dy * expected_dy) / expected_length_sq
             confirmed = progress >= .30
         if confirmed:
+            self.unresponsive_moves = 0
             self.pending_move = None
             self.selected = candidate
             self.predicted = (candidate.x, candidate.y)
@@ -91,8 +125,91 @@ class Controller:
             return True
         if (now - sent_at) * 1000 < self.cfg.post_move_timeout_ms:
             return False
+        if now >= self.end_guard_at:
+            self.unresponsive_moves += 1
+            if self.unresponsive_moves >= self.cfg.end_guard_move_failures:
+                self.pause("no visual response after repeated moves; task likely ended")
+                return False
         self._drop_lock()
         return False
+
+    def _count_distance(self, first, second):
+        return math.hypot((first[0] - second[0]) * self.cfg.counts_per_radian_x,
+                          (first[1] - second[1]) * self.cfg.counts_per_radian_y)
+
+    def _project_global(self, position, frame):
+        return project_angles((position[0] - self.view_angles[0],
+                               position[1] - self.view_angles[1]),
+                              frame.center, frame.client_size[0], self.cfg.horizontal_fov)
+
+    def _plan_and_select(self, targets, frame):
+        """Save the shortest route through up to three currently visible targets."""
+        candidates = sorted(targets, key=lambda target: self._aim_cost(target, frame))[:self.cfg.planned_targets]
+        positions = {id(target): self._global_angles(target, frame) for target in candidates}
+        origin = tuple(self.view_angles)
+
+        def route_cost(route):
+            points = [origin] + [positions[id(target)] for target in route]
+            return sum(self._count_distance(points[index], points[index + 1])
+                       for index in range(len(points) - 1))
+
+        route = min(itertools.permutations(candidates), key=route_cost)
+        self.saved_route = [positions[id(target)] for target in route[1:]]
+        return route[0]
+
+    def _select_saved(self, targets, frame):
+        if not self.saved_route:
+            return None
+        expected_global = self.saved_route.pop(0)
+        expected_pixel = self._project_global(expected_global, frame)
+        candidate = min(targets, key=lambda target: target.distance(expected_pixel), default=None)
+        if candidate is None:
+            self.saved_route = []
+            return None
+        limit = max(self.cfg.lock_distance_px * 1.5, candidate.radius * 1.5)
+        if candidate.distance(expected_pixel) > limit:
+            self.saved_route = []
+            return None
+        return candidate
+
+    def _pending_match(self, shot, targets, frame):
+        expected = self._project_global(shot[0], frame)
+        width, height = frame.image.shape[1], frame.image.shape[0]
+        if not (-shot[1] <= expected[0] <= width + shot[1] and
+                -shot[1] <= expected[1] <= height + shot[1]):
+            return None, False
+        candidate = min(targets, key=lambda target: target.distance(expected), default=None)
+        limit = max(24.0, min(self.cfg.lock_distance_px, shot[1] * 1.1))
+        return candidate, candidate is not None and candidate.distance(expected) <= limit
+
+    def _observe_pending_shots(self, targets, frame):
+        remaining = []
+        for shot in self.pending_shots:
+            _, visible = self._pending_match(shot, targets, frame)
+            expected = self._project_global(shot[0], frame)
+            width, height = frame.image.shape[1], frame.image.shape[0]
+            on_screen = (-shot[1] <= expected[0] <= width + shot[1] and
+                         -shot[1] <= expected[1] <= height + shot[1])
+            if not on_screen:
+                remaining.append(shot)
+                continue
+            shot[3] = 0 if visible else shot[3] + 1
+            if shot[3] >= 2:
+                self.disappearances += 1
+            else:
+                remaining.append(shot)
+        self.pending_shots = remaining
+
+    def _pipeline_eligible(self, targets, frame, now):
+        eligible = []
+        for target in targets:
+            position = self._global_angles(target, frame)
+            blocked = any((now - shot[2]) * 1000 < self.cfg.repeat_fire_interval_ms and
+                          self._count_distance(position, shot[0]) <= self.cfg.lock_distance_px
+                          for shot in self.pending_shots)
+            if not blocked:
+                eligible.append(target)
+        return eligible
 
     def _aim_cost(self, target, frame):
         """Mouse-count distance is the real travel cost; pixels are perspective warped."""
@@ -102,9 +219,7 @@ class Controller:
                 (pitch * self.cfg.counts_per_radian_y) ** 2) ** .5
 
     def _select_next(self, targets, frame):
-        # Detector returns every visible target. Re-plan after each disappearance,
-        # since Aimlabs immediately inserts a new, previously unknowable target.
-        return min(targets, key=lambda target: self._aim_cost(target, frame))
+        return self._plan_and_select(targets, frame)
 
     def update(self, frame, targets, now):
         cfg = self.cfg
@@ -125,6 +240,20 @@ class Controller:
             self.countdown_active = False
             if self.selected is not None:
                 self.lock_started = now
+        if cfg.mode == "direct" and self.pending_move is None:
+            self._observe_pending_shots(targets, frame)
+        if self.state == "PIPELINE":
+            eligible = self._pipeline_eligible(targets, frame, now)
+            if not eligible:
+                return Action("none", reason="waiting for next pipeline target")
+            self.selected = self._select_saved(eligible, frame)
+            if self.selected is None:
+                self.selected = self._plan_and_select(eligible, frame)
+            self.predicted = (self.selected.x, self.selected.y)
+            self.lock_started = now
+            self.moves_on_lock = 0
+            self.missing = 0
+            self.state = "AIM"
         if self.state == "WAIT_RESULT":
             nearby = [t for t in targets if t.distance((self.selected.x, self.selected.y)) < max(6, self.selected.radius * .65)]
             self.missing = self.missing + 1 if not nearby else 0
@@ -141,7 +270,7 @@ class Controller:
                     self.state = "AIM"
                     self.stable = 0
                 elif (now - self.last_shot) * 1000 >= cfg.repeat_fire_interval_ms:
-                    return self._shoot(now, "retry until target disappears")
+                    return self._shoot(now, frame, "retry until target disappears")
                 else:
                     return Action("none")
             elif cfg.mode == "direct":
@@ -173,6 +302,8 @@ class Controller:
             self.state = "AIM"
         elif self.pending_move is not None:
             if not self._post_move_match(targets, now):
+                if not self.active:
+                    return Action("pause", reason=self.state)
                 return Action("none", reason="waiting for observed movement")
         else:
             match = min(targets, key=lambda t: t.distance(self.predicted), default=None)
@@ -198,7 +329,7 @@ class Controller:
                 self.state = "COUNTDOWN"
                 return Action("none", reason="countdown: aiming only")
             if self.stable >= cfg.stable_frames and (now - self.last_shot) * 1000 >= cfg.shot_cooldown_ms:
-                return self._shoot(now)
+                return self._shoot(now, frame)
             return Action("none")
         self.stable = 0
         gain = (cfg.direct_correction_gain
@@ -215,6 +346,8 @@ class Controller:
                 frame.center, frame.client_size[0], cfg.horizontal_fov)
             self.pending_move = (self.selected, self.predicted, now)
             self.moves_on_lock += 1
+            self.view_angles[0] += dx / cfg.counts_per_radian_x
+            self.view_angles[1] += dy / cfg.counts_per_radian_y
             self.state = "WAIT_MOVE"
             self.wait_until = now + cfg.move_settle_ms / 1000
             return Action("move", dx, dy)

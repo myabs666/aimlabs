@@ -170,6 +170,38 @@ class ControlTests(unittest.TestCase):
         controller.update(frame(), [horizontal, vertical], 1.0)
         self.assertEqual(controller.selected, vertical)
 
+    def test_direct_saves_three_target_route_and_pipelines_after_shot(self):
+        controller = Controller(settings(mode="direct", stable_frames=1, planned_targets=3))
+        controller.arm()
+        left = Target(250, 300, 12, 400)
+        right = Target(550, 300, 12, 400)
+        self.assertEqual(controller.update(frame(1, 1.0), [self.center, left, right], 1.0).kind, "click")
+        self.assertEqual(controller.state, "PIPELINE")
+        self.assertEqual(len(controller.saved_route), 2)
+        action = controller.update(frame(2, 1.04), [self.center, left, right], 1.04)
+        self.assertEqual(action.kind, "move")
+        self.assertEqual(len(controller.saved_route), 1)
+
+    def test_end_guard_pauses_after_three_unresponsive_moves(self):
+        controller = Controller(settings(mode="direct", stable_frames=1,
+                                         post_move_timeout_ms=10,
+                                         end_guard_move_failures=3))
+        controller.arm()
+        controller.set_end_guard(0.0)
+        target = Target(550, 300, 20, 1200)
+        sequence = 1
+        now = 1.0
+        for failure in range(3):
+            self.assertEqual(controller.update(frame(sequence, now), [target], now).kind, "move")
+            sequence += 1
+            now += .02
+            result = controller.update(frame(sequence, now), [target], now)
+            sequence += 1
+            now += .02
+        self.assertEqual(result.kind, "pause")
+        self.assertFalse(controller.active)
+        self.assertIn("no visual response", result.reason)
+
     def test_direct_waits_for_observed_move_instead_of_repeating_stale_input(self):
         controller = Controller(settings(mode="direct", stable_frames=1))
         controller.arm()
@@ -276,7 +308,7 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(result["hits"], 6)
             self.assertEqual(result["shots"], 6)
             if mode == "direct":
-                self.assertEqual(result["moves"], result["hits"])
+                self.assertLessEqual(result["moves"], result["hits"] + 2)
 
     def test_low_speed_learning_remeasures_each_axis(self):
         cfg = settings(learning_hits=4, learning_settle_ms=1, shot_cooldown_ms=20,

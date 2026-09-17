@@ -69,6 +69,7 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
     mouse = Mouse(lambda: controller.active and window.foreground() and window.rect() == armed_rect)
     last_frame_at, last_preview, last_error = time.perf_counter(), 0.0, ""
     task_started = False
+    task_end_guard_at = float("inf")
     title = "AimVision preview | F8 toggle in game | F9 stop | F10 snapshot"
     if not headless:
         cv2.namedWindow(title, cv2.WINDOW_NORMAL)
@@ -104,8 +105,11 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                             mouse.click(cfg.click_hold_ms)
                             countdown_at = time.perf_counter()
                             controller.begin_countdown(countdown_at)
+                            task_end_guard_at = controller.end_guard_at
                             task_started = True
                             log.event("start_click", countdown_ms=cfg.start_countdown_ms)
+                        else:
+                            controller.set_end_guard(task_end_guard_at)
                         last_frame_at = start
                     except (ValueError, RuntimeError) as exc:
                         controller.pause(str(exc))
@@ -156,13 +160,17 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                         mouse.release_all()
                     if action.kind != "none":
                         detail = {}
-                        if controller.selected is not None:
-                            detail["target"] = [controller.selected.x, controller.selected.y,
-                                                controller.selected.radius]
+                        detail_target = (controller.last_clicked if action.kind == "click"
+                                         else controller.selected)
+                        if detail_target is not None:
+                            detail["target"] = [detail_target.x, detail_target.y,
+                                                detail_target.radius]
                         if controller.predicted is not None:
                             detail["predicted"] = list(controller.predicted)
                         if action.kind == "move":
                             detail["move_number"] = controller.moves_on_lock
+                        detail["route_remaining"] = len(controller.saved_route)
+                        detail["pending_results"] = len(controller.pending_shots)
                         log.event(action.kind, dx=action.dx, dy=action.dy, state=controller.state,
                                   reason=action.reason, **detail)
                 except RuntimeError as exc:
