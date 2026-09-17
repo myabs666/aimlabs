@@ -29,10 +29,12 @@ class Motion:
         self.remainder = [0.0, 0.0]
         self.last_time = None
 
-    def step(self, target, frame, now):
+    def step(self, target, frame, now, gain=None):
         cfg = self.cfg
         angles = pixel_angles((target.x, target.y), frame.center, frame.client_size[0], cfg.horizontal_fov)
-        desired = [angles[0] * cfg.counts_per_radian_x * cfg.gain, angles[1] * cfg.counts_per_radian_y * cfg.gain]
+        active_gain = cfg.gain if gain is None else gain
+        desired = [angles[0] * cfg.counts_per_radian_x * active_gain,
+                   angles[1] * cfg.counts_per_radian_y * active_gain]
         dt = max(.001, min(.05, now - self.last_time)) if self.last_time is not None else cfg.move_settle_ms / 1000
         self.last_time = now
         if cfg.mode == "smooth":

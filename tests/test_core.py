@@ -126,13 +126,37 @@ class ControlTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Controller(Config()).arm()
 
-    def test_direct_mode_uses_single_stable_and_result_frame(self):
+    def test_direct_mode_uses_single_stable_and_two_result_frames(self):
         controller = Controller(settings(mode="direct", stable_frames=1))
         controller.arm()
         self.assertEqual(controller.update(frame(), [self.center], 1).kind, "click")
-        action = controller.update(frame(2, 1.04), [], 1.04)
+        self.assertEqual(controller.update(frame(2, 1.04), [], 1.04).kind, "none")
+        action = controller.update(frame(3, 1.06), [], 1.06)
         self.assertEqual(controller.disappearances, 1)
         self.assertEqual(action.kind, "none")
+
+    def test_direct_waits_for_observed_move_instead_of_repeating_stale_input(self):
+        controller = Controller(settings(mode="direct", stable_frames=1))
+        controller.arm()
+        target = Target(550, 300, 20, 1200)
+        first = controller.update(frame(), [target], 1)
+        self.assertEqual(first.kind, "move")
+        stale = controller.update(frame(2, 1.02), [target], 1.02)
+        self.assertEqual(stale.kind, "none")
+        expected = Target(*controller.predicted, 20, 1200)
+        self.assertEqual(controller.update(frame(3, 1.04), [expected], 1.04).kind, "click")
+
+    def test_direct_damps_only_confirmed_residual_correction(self):
+        controller = Controller(settings(mode="direct", stable_frames=1))
+        controller.arm()
+        target = Target(550, 300, 20, 1200)
+        first = controller.update(frame(), [target], 1)
+        residual = Target(420, 300, 20, 1200)
+        second = controller.update(frame(2, 1.02), [residual], 1.02)
+        self.assertEqual(second.kind, "move")
+        self.assertGreater(first.dx, 0)
+        self.assertGreater(second.dx, 0)
+        self.assertLess(second.dx, first.dx)
 
 
 class CalibrationTests(unittest.TestCase):

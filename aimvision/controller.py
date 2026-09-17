@@ -24,6 +24,8 @@ class Controller:
         self.missing = 0
         self.attempts = 0
         self.ghost = None
+        self.pending_move = None
+        self.moves_on_lock = 0
         self.motion.reset()
 
     def arm(self):
@@ -44,8 +46,35 @@ class Controller:
         self.stable = 0
         self.attempts = 0
         self.missing = 0
+        self.pending_move = None
+        self.moves_on_lock = 0
         self.motion.reset()
         self.state = "SEEK"
+
+    def _post_move_match(self, targets, now):
+        """Wait until the captured scene actually reflects the injected move."""
+        before, expected, sent_at = self.pending_move
+        candidate = min(targets, key=lambda target: target.distance(expected), default=None)
+        limit = max(24.0, min(self.cfg.lock_distance_px,
+                              before.radius * self.cfg.post_move_match_radius_fraction))
+        expected_dx, expected_dy = expected[0] - before.x, expected[1] - before.y
+        expected_length_sq = expected_dx * expected_dx + expected_dy * expected_dy
+        confirmed = candidate is not None and candidate.distance(expected) <= limit
+        if confirmed and expected_length_sq >= 144:
+            observed_dx, observed_dy = candidate.x - before.x, candidate.y - before.y
+            progress = (observed_dx * expected_dx + observed_dy * expected_dy) / expected_length_sq
+            confirmed = progress >= .30
+        if confirmed:
+            self.pending_move = None
+            self.selected = candidate
+            self.predicted = (candidate.x, candidate.y)
+            self.missing = 0
+            self.state = "AIM"
+            return True
+        if (now - sent_at) * 1000 < self.cfg.post_move_timeout_ms:
+            return False
+        self._drop_lock()
+        return False
 
     def update(self, frame, targets, now):
         cfg = self.cfg
@@ -65,8 +94,7 @@ class Controller:
         if self.state == "WAIT_RESULT":
             nearby = [t for t in targets if t.distance((self.selected.x, self.selected.y)) < max(6, self.selected.radius * .65)]
             self.missing = self.missing + 1 if not nearby else 0
-            required_missing = 1 if cfg.mode == "direct" else 2
-            if self.missing >= required_missing:
+            if self.missing >= 2:
                 self.disappearances += 1
                 self.ghost = (self.selected.x, self.selected.y, max(8, self.selected.radius * 1.6), now + cfg.ghost_ms / 1000)
                 self._drop_lock()
@@ -91,10 +119,16 @@ class Controller:
             self.selected = min(eligible, key=lambda t: t.distance(frame.center))
             self.predicted = (self.selected.x, self.selected.y)
             self.lock_started = now
+            self.moves_on_lock = 0
             self.state = "AIM"
+        elif self.pending_move is not None:
+            if not self._post_move_match(targets, now):
+                return Action("none", reason="waiting for observed movement")
         else:
             match = min(targets, key=lambda t: t.distance(self.predicted), default=None)
-            if match is None or match.distance(self.predicted) > max(cfg.lock_distance_px, self.selected.radius * 2):
+            limit = max(24.0, min(cfg.lock_distance_px,
+                                  self.selected.radius * cfg.post_move_match_radius_fraction))
+            if match is None or match.distance(self.predicted) > limit:
                 self.stable = 0
                 self.missing += 1
                 if self.missing >= 2:
@@ -120,7 +154,9 @@ class Controller:
                 return Action("click")
             return Action("none")
         self.stable = 0
-        dx, dy = self.motion.step(self.selected, frame, now)
+        gain = (cfg.direct_correction_gain
+                if cfg.mode == "direct" and self.moves_on_lock > 0 else cfg.gain)
+        dx, dy = self.motion.step(self.selected, frame, now, gain=gain)
         if dx or dy:
             # Spherical prediction includes horizontal/vertical perspective
             # coupling. Fresh detection after every short move remains final.
@@ -130,6 +166,9 @@ class Controller:
                 (yaw - dx / cfg.counts_per_radian_x,
                  pitch - dy / cfg.counts_per_radian_y),
                 frame.center, frame.client_size[0], cfg.horizontal_fov)
+            self.pending_move = (self.selected, self.predicted, now)
+            self.moves_on_lock += 1
+            self.state = "WAIT_MOVE"
             self.wait_until = now + cfg.move_settle_ms / 1000
             return Action("move", dx, dy)
         return Action("none")

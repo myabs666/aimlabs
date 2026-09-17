@@ -143,7 +143,16 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                     elif action.kind == "pause":
                         mouse.release_all()
                     if action.kind != "none":
-                        log.event(action.kind, dx=action.dx, dy=action.dy, state=controller.state, reason=action.reason)
+                        detail = {}
+                        if controller.selected is not None:
+                            detail["target"] = [controller.selected.x, controller.selected.y,
+                                                controller.selected.radius]
+                        if controller.predicted is not None:
+                            detail["predicted"] = list(controller.predicted)
+                        if action.kind == "move":
+                            detail["move_number"] = controller.moves_on_lock
+                        log.event(action.kind, dx=action.dx, dy=action.dy, state=controller.state,
+                                  reason=action.reason, **detail)
                 except RuntimeError as exc:
                     controller.pause(str(exc))
                     mouse.release_all()

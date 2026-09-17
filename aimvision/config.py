@@ -50,18 +50,21 @@ class Config:
     mode: str = "direct"
     gain: float = 1.0
     max_step_counts: int = 1400
+    direct_correction_gain: float = 0.55
     max_speed: float = 2400.0
     max_acceleration: float = 18000.0
     move_settle_ms: float = 8.0
-    max_frame_age_ms: float = 80.0
+    max_frame_age_ms: float = 150.0
     stale_pause_ms: float = 500.0
     aim_radius_fraction: float = 0.65
     stable_frames: int = 1
     click_hold_ms: float = 2.0
     shot_cooldown_ms: float = 35.0
-    result_timeout_ms: float = 180.0
-    ghost_ms: float = 50.0
-    lock_distance_px: float = 100.0
+    result_timeout_ms: float = 350.0
+    ghost_ms: float = 120.0
+    lock_distance_px: float = 80.0
+    post_move_timeout_ms: float = 250.0
+    post_move_match_radius_fraction: float = 0.9
     lock_timeout_ms: float = 1800.0
     max_shots_per_target: int = 2
 
@@ -88,7 +91,7 @@ class Config:
                 raise ValueError("Invalid HSV bounds (H: 0..179; S,V: 0..255)")
         if not 0 < self.min_area < self.max_area or not 10 < self.horizontal_fov < 170:
             raise ValueError("Invalid target area / horizontal FOV")
-        for name in ("min_circularity", "min_fill", "learning_gain", "learning_fast_gain", "gain", "aim_radius_fraction"):
+        for name in ("min_circularity", "min_fill", "learning_gain", "learning_fast_gain", "gain", "direct_correction_gain", "aim_radius_fraction", "post_move_match_radius_fraction"):
             if not 0 < getattr(self, name) <= 1:
                 raise ValueError(f"{name} must be in (0,1]")
         if not (0 <= self.exclude_top_fraction < .4 and 0 <= self.exclude_bottom_fraction < .4):
@@ -99,7 +102,7 @@ class Config:
             raise ValueError("Calibration counts must be non-negative")
         if len(self.calibrated_size) != 2 or any(type(v) is not int or v < 0 for v in self.calibrated_size):
             raise ValueError("Invalid calibrated_size")
-        for name in ("max_speed", "max_acceleration", "max_step_counts", "learning_hits", "learning_max_step_counts", "learning_fast_max_step_counts", "learning_settle_ms", "learning_stall_timeout_ms", "stable_frames", "max_shots_per_target", "lock_distance_px", "lock_timeout_ms", "move_settle_ms", "max_frame_age_ms", "stale_pause_ms", "click_hold_ms", "shot_cooldown_ms", "result_timeout_ms", "ghost_ms", "calibration_probe_counts", "calibration_settle_ms"):
+        for name in ("max_speed", "max_acceleration", "max_step_counts", "learning_hits", "learning_max_step_counts", "learning_fast_max_step_counts", "learning_settle_ms", "learning_stall_timeout_ms", "stable_frames", "max_shots_per_target", "lock_distance_px", "lock_timeout_ms", "post_move_timeout_ms", "move_settle_ms", "max_frame_age_ms", "stale_pause_ms", "click_hold_ms", "shot_cooldown_ms", "result_timeout_ms", "ghost_ms", "calibration_probe_counts", "calibration_settle_ms"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         if self.shot_cooldown_ms < self.click_hold_ms or self.result_timeout_ms < self.shot_cooldown_ms:
