@@ -30,6 +30,8 @@ class Capture:
         self.sequence = 0
         self.last_timestamp = 0.0
         self.last_rect = None
+        self.capture_region = None
+        self.threaded = False
         # DXcam's output descriptor gives the exact desktop origin, including negatives.
         output = getattr(self.camera, "_output", None)
         descriptor = getattr(output, "desc", None)
@@ -51,12 +53,28 @@ class Capture:
         x = left + (width - rw) // 2
         y = top + (height - rh) // 2
         region = (x - ml, y - mt, x - ml + rw, y - mt + rh)
-        # Synchronous polling: no capture queue, no duplicate-frame video mode.
-        image = self.camera.grab(region=region)
+        if self.cfg.threaded_capture and hasattr(self.camera, "start") and hasattr(self.camera, "get_latest_frame"):
+            if not self.threaded:
+                # Capture and CV now run in parallel. video_mode=False preserves real
+                # desktop timestamps instead of manufacturing duplicate frames.
+                self.camera.start(region=region, target_fps=self.cfg.capture_hz, video_mode=False)
+                self.capture_region = region
+                self.threaded = True
+            elif region != self.capture_region:
+                raise RuntimeError("Game window geometry changed; restart capture")
+            # The ring has eight slots and detection consumes a frame long before
+            # wraparound. A view avoids copying a full 2880x1800 BGR image each tick.
+            latest = self.camera.get_latest_frame(copy=False, with_timestamp=True)
+            if latest is None:
+                return None
+            image, timestamp = latest
+        else:
+            image = self.camera.grab(region=region)
+            duplicator = getattr(self.camera, "_duplicator", None)
+            timestamp = float(getattr(duplicator, "latest_frame_time", 0.0))
         if image is None:
             return None
-        duplicator = getattr(self.camera, "_duplicator", None)
-        timestamp = float(getattr(duplicator, "latest_frame_time", 0.0))
+        timestamp = float(timestamp)
         if timestamp <= self.last_timestamp:
             return None
         if timestamp > time.perf_counter():
@@ -68,4 +86,6 @@ class Capture:
         return Frame(image, timestamp, self.sequence, center, (width, height))
 
     def close(self):
+        if self.threaded and getattr(self.camera, "is_capturing", False):
+            self.camera.stop()
         self.camera.release()

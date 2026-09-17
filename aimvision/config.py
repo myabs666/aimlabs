@@ -24,6 +24,7 @@ class Config:
     output_idx: int = 0
     roi_size: int = 0
     capture_hz: int = 120
+    threaded_capture: bool = True
     preview_hz: int = 20
     detection_max_width: int = 720
     hsv_low: list[int] = field(default_factory=lambda: [75, 90, 90])
@@ -60,6 +61,8 @@ class Config:
     stable_frames: int = 1
     click_hold_ms: float = 2.0
     shot_cooldown_ms: float = 35.0
+    repeat_fire_interval_ms: float = 350.0
+    start_countdown_ms: float = 3100.0
     result_timeout_ms: float = 350.0
     ghost_ms: float = 120.0
     lock_distance_px: float = 80.0
@@ -78,6 +81,8 @@ class Config:
         for name in ("device_idx", "output_idx", "roi_size", "capture_hz", "preview_hz", "detection_max_width", "calibration_probe_counts", "learning_hits", "learning_max_step_counts", "learning_fast_max_step_counts", "max_step_counts", "stable_frames", "max_shots_per_target"):
             if type(getattr(self, name)) is not int:
                 raise ValueError(f"{name} must be an integer")
+        if type(self.threaded_capture) is not bool:
+            raise ValueError("threaded_capture must be true or false")
         if (self.device_idx < 0 or self.output_idx < 0 or
                 (self.roi_size != 0 and self.roi_size < 64) or
                 (self.detection_max_width != 0 and self.detection_max_width < 320)):
@@ -102,11 +107,13 @@ class Config:
             raise ValueError("Calibration counts must be non-negative")
         if len(self.calibrated_size) != 2 or any(type(v) is not int or v < 0 for v in self.calibrated_size):
             raise ValueError("Invalid calibrated_size")
-        for name in ("max_speed", "max_acceleration", "max_step_counts", "learning_hits", "learning_max_step_counts", "learning_fast_max_step_counts", "learning_settle_ms", "learning_stall_timeout_ms", "stable_frames", "max_shots_per_target", "lock_distance_px", "lock_timeout_ms", "post_move_timeout_ms", "move_settle_ms", "max_frame_age_ms", "stale_pause_ms", "click_hold_ms", "shot_cooldown_ms", "result_timeout_ms", "ghost_ms", "calibration_probe_counts", "calibration_settle_ms"):
+        for name in ("max_speed", "max_acceleration", "max_step_counts", "learning_hits", "learning_max_step_counts", "learning_fast_max_step_counts", "learning_settle_ms", "learning_stall_timeout_ms", "stable_frames", "max_shots_per_target", "lock_distance_px", "lock_timeout_ms", "post_move_timeout_ms", "move_settle_ms", "max_frame_age_ms", "stale_pause_ms", "click_hold_ms", "shot_cooldown_ms", "repeat_fire_interval_ms", "start_countdown_ms", "result_timeout_ms", "ghost_ms", "calibration_probe_counts", "calibration_settle_ms"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
-        if self.shot_cooldown_ms < self.click_hold_ms or self.result_timeout_ms < self.shot_cooldown_ms:
-            raise ValueError("Expected click_hold <= cooldown <= result_timeout")
+        if (self.shot_cooldown_ms < self.click_hold_ms or
+                self.repeat_fire_interval_ms < self.shot_cooldown_ms or
+                self.result_timeout_ms < self.shot_cooldown_ms):
+            raise ValueError("Expected click_hold <= cooldown <= repeat interval and result timeout")
         if self.stale_pause_ms < self.max_frame_age_ms:
             raise ValueError("stale_pause must be >= max_frame_age")
         if (self.calibration_probe_counts > 200 or self.learning_max_step_counts > 100 or

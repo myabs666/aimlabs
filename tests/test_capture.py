@@ -43,3 +43,31 @@ class CaptureGeometryTests(unittest.TestCase):
         capture = self.make_capture((-500, 0, 500, 900))
         with self.assertRaises(RuntimeError):
             capture.grab()
+
+    def test_threaded_capture_uses_public_timestamp_and_latest_frame(self):
+        timestamp = time.perf_counter() - .01
+        camera = SimpleNamespace(
+            _output=SimpleNamespace(desc=SimpleNamespace(DesktopCoordinates=SimpleNamespace(
+                left=0, top=0, right=1920, bottom=1080))),
+            is_capturing=False,
+        )
+        def start(**kwargs):
+            camera.start_args = kwargs
+            camera.is_capturing = True
+        camera.start = start
+        def get_latest_frame(**kwargs):
+            camera.latest_args = kwargs
+            return np.zeros((900, 1600, 3), np.uint8), timestamp
+        camera.get_latest_frame = get_latest_frame
+        camera.stop = lambda: setattr(camera, "is_capturing", False)
+        camera.release = lambda: None
+        with patch('aimvision.capture.load_dxcam', return_value=SimpleNamespace(create=lambda **_: camera)):
+            capture = Capture(Config(capture_hz=144), SimpleNamespace(rect=lambda: (100, 100, 1700, 1000)))
+        result = capture.grab()
+        self.assertEqual(camera.start_args["target_fps"], 144)
+        self.assertFalse(camera.start_args["video_mode"])
+        self.assertFalse(camera.latest_args["copy"])
+        self.assertTrue(camera.latest_args["with_timestamp"])
+        self.assertEqual(result.timestamp, timestamp)
+        capture.close()
+        self.assertFalse(camera.is_capturing)

@@ -26,6 +26,8 @@ class Controller:
         self.ghost = None
         self.pending_move = None
         self.moves_on_lock = 0
+        self.fire_enabled_at = 0.0
+        self.countdown_active = False
         self.motion.reset()
 
     def arm(self):
@@ -34,6 +36,22 @@ class Controller:
         self.reset()
         self.active = True
         self.state = "SEEK"
+
+    def begin_countdown(self, now):
+        """Allow aiming immediately, but suppress task shots until the countdown ends."""
+        self.fire_enabled_at = now + self.cfg.start_countdown_ms / 1000
+        self.countdown_active = True
+        self.wait_until = now + max(self.cfg.click_hold_ms, self.cfg.shot_cooldown_ms) / 1000
+        self.state = "COUNTDOWN"
+
+    def _shoot(self, now, reason=""):
+        self.state = "WAIT_RESULT"
+        self.last_shot = now
+        self.wait_until = now + max(self.cfg.click_hold_ms, self.cfg.shot_cooldown_ms) / 1000
+        self.attempts += 1
+        self.shots += 1
+        self.stable = 0
+        return Action("click", reason=reason)
 
     def pause(self, reason="paused"):
         self.active = False
@@ -76,6 +94,18 @@ class Controller:
         self._drop_lock()
         return False
 
+    def _aim_cost(self, target, frame):
+        """Mouse-count distance is the real travel cost; pixels are perspective warped."""
+        yaw, pitch = pixel_angles((target.x, target.y), frame.center,
+                                  frame.client_size[0], self.cfg.horizontal_fov)
+        return ((yaw * self.cfg.counts_per_radian_x) ** 2 +
+                (pitch * self.cfg.counts_per_radian_y) ** 2) ** .5
+
+    def _select_next(self, targets, frame):
+        # Detector returns every visible target. Re-plan after each disappearance,
+        # since Aimlabs immediately inserts a new, previously unknowable target.
+        return min(targets, key=lambda target: self._aim_cost(target, frame))
+
     def update(self, frame, targets, now):
         cfg = self.cfg
         if not self.active:
@@ -91,6 +121,10 @@ class Controller:
         # Only an observation captured AFTER settling may drive the next action.
         if frame.timestamp < self.wait_until:
             return Action("none", reason="waiting for post-action frame")
+        if self.countdown_active and now >= self.fire_enabled_at:
+            self.countdown_active = False
+            if self.selected is not None:
+                self.lock_started = now
         if self.state == "WAIT_RESULT":
             nearby = [t for t in targets if t.distance((self.selected.x, self.selected.y)) < max(6, self.selected.radius * .65)]
             self.missing = self.missing + 1 if not nearby else 0
@@ -98,6 +132,22 @@ class Controller:
                 self.disappearances += 1
                 self.ghost = (self.selected.x, self.selected.y, max(8, self.selected.radius * 1.6), now + cfg.ghost_ms / 1000)
                 self._drop_lock()
+            elif cfg.mode == "direct" and nearby:
+                candidate = min(nearby, key=lambda t: t.distance(frame.center))
+                self.selected = candidate
+                self.predicted = (candidate.x, candidate.y)
+                tolerance = max(1.0, candidate.radius * cfg.aim_radius_fraction)
+                if candidate.distance(frame.center) > tolerance:
+                    self.state = "AIM"
+                    self.stable = 0
+                elif (now - self.last_shot) * 1000 >= cfg.repeat_fire_interval_ms:
+                    return self._shoot(now, "retry until target disappears")
+                else:
+                    return Action("none")
+            elif cfg.mode == "direct":
+                # One missing observation is promising hit feedback. Wait for the
+                # second frame instead of falling into the finite-retry branch.
+                return Action("none")
             elif (now - self.last_shot) * 1000 >= cfg.result_timeout_ms:
                 if self.attempts >= cfg.max_shots_per_target:
                     self.pause("target did not disappear after retries")
@@ -116,7 +166,7 @@ class Controller:
                     self.ghost = None
             if not eligible:
                 return Action("none")
-            self.selected = min(eligible, key=lambda t: t.distance(frame.center))
+            self.selected = self._select_next(eligible, frame)
             self.predicted = (self.selected.x, self.selected.y)
             self.lock_started = now
             self.moves_on_lock = 0
@@ -137,21 +187,18 @@ class Controller:
             self.missing = 0
             self.selected = match
             self.predicted = (match.x, match.y)
-        if (now - self.lock_started) * 1000 > cfg.lock_timeout_ms:
+        if not self.countdown_active and (now - self.lock_started) * 1000 > cfg.lock_timeout_ms:
             self.pause("aim timeout; check calibration")
             return Action("pause", reason=self.state)
         tolerance = max(1.0, self.selected.radius * cfg.aim_radius_fraction)
         if self.selected.distance(frame.center) <= tolerance:
             self.motion.reset()
             self.stable += 1
+            if self.countdown_active or now < self.fire_enabled_at:
+                self.state = "COUNTDOWN"
+                return Action("none", reason="countdown: aiming only")
             if self.stable >= cfg.stable_frames and (now - self.last_shot) * 1000 >= cfg.shot_cooldown_ms:
-                self.state = "WAIT_RESULT"
-                self.last_shot = now
-                self.wait_until = now + max(cfg.click_hold_ms, cfg.shot_cooldown_ms) / 1000
-                self.attempts += 1
-                self.shots += 1
-                self.stable = 0
-                return Action("click")
+                return self._shoot(now)
             return Action("none")
         self.stable = 0
         gain = (cfg.direct_correction_gain

@@ -8,6 +8,7 @@
   "output_idx": 0,
   "roi_size": 0,
   "capture_hz": 120,
+  "threaded_capture": true,
   "preview_hz": 20,
   "detection_max_width": 720,
   "hsv_low": [
@@ -55,6 +56,8 @@
   "stable_frames": 1,
   "click_hold_ms": 2.0,
   "shot_cooldown_ms": 35.0,
+  "repeat_fire_interval_ms": 350.0,
+  "start_countdown_ms": 3100.0,
   "result_timeout_ms": 350.0,
   "ghost_ms": 120.0,
   "lock_distance_px": 80.0,

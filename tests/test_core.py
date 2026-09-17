@@ -135,6 +135,41 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(controller.disappearances, 1)
         self.assertEqual(action.kind, "none")
 
+    def test_countdown_allows_aiming_but_blocks_fire(self):
+        controller = Controller(settings(mode="direct", stable_frames=1, start_countdown_ms=3000))
+        controller.arm()
+        controller.begin_countdown(1.0)
+        self.assertEqual(controller.update(frame(1, 1.1), [self.center], 1.1).kind, "none")
+        self.assertEqual(controller.state, "COUNTDOWN")
+        self.assertEqual(controller.shots, 0)
+        self.assertEqual(controller.update(frame(2, 4.01), [self.center], 4.01).kind, "click")
+
+    def test_direct_retries_until_target_disappears(self):
+        controller = Controller(settings(mode="direct", stable_frames=1,
+                                         repeat_fire_interval_ms=350))
+        controller.arm()
+        self.assertEqual(controller.update(frame(1, 1.0), [self.center], 1.0).kind, "click")
+        for sequence, now in enumerate((1.04, 1.12, 1.24), start=2):
+            self.assertEqual(controller.update(frame(sequence, now), [self.center], now).kind, "none")
+        for sequence, now in enumerate((1.36, 1.72, 2.08, 2.44), start=5):
+            self.assertEqual(controller.update(frame(sequence, now), [self.center], now).kind, "click")
+        self.assertGreater(controller.shots, controller.cfg.max_shots_per_target)
+        self.assertTrue(controller.active)
+        self.assertEqual(controller.update(frame(9, 2.80), [], 2.80).kind, "none")
+        self.assertEqual(controller.update(frame(10, 2.84), [], 2.84).kind, "none")
+        self.assertEqual(controller.disappearances, 1)
+
+    def test_next_target_uses_calibrated_angular_travel_not_pixel_distance(self):
+        cfg = settings(mode="direct", stable_frames=1)
+        cfg.counts_per_radian_x = 3000
+        cfg.counts_per_radian_y = 1000
+        controller = Controller(cfg)
+        controller.arm()
+        horizontal = Target(430, 300, 10, 300)
+        vertical = Target(400, 330, 10, 300)
+        controller.update(frame(), [horizontal, vertical], 1.0)
+        self.assertEqual(controller.selected, vertical)
+
     def test_direct_waits_for_observed_move_instead_of_repeating_stale_input(self):
         controller = Controller(settings(mode="direct", stable_frames=1))
         controller.arm()

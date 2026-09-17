@@ -167,6 +167,12 @@ class Mouse:
         self._send(0x0002)
         self.held = True
         self.release_at = time.perf_counter() + hold_ms / 1000
+        # The vision loop can take tens of milliseconds. Releasing from its next
+        # tick would turn a requested 2 ms click into a 40-60 ms hold.
+        remaining = self.release_at - time.perf_counter()
+        if remaining > 0:
+            time.sleep(remaining)
+        self.release_all()
 
     def tick(self):
         if self.held and time.perf_counter() >= self.release_at:

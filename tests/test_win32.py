@@ -36,3 +36,12 @@ class WindowsInputTests(unittest.TestCase):
             mouse.release_all()
             send.assert_called_once_with(0x0004)
         self.assertFalse(mouse.held)
+
+    def test_click_releases_in_the_call_instead_of_waiting_for_vision_loop(self):
+        from aimvision.win32 import Mouse, user32
+        mouse = Mouse(lambda: True)
+        with patch.object(user32, 'GetAsyncKeyState', return_value=0), \
+                patch.object(mouse, '_send') as send, patch('aimvision.win32.time.sleep'):
+            mouse.click(2)
+        self.assertEqual([call.args[0] for call in send.call_args_list], [0x0002, 0x0004])
+        self.assertFalse(mouse.held)

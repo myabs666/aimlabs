@@ -18,14 +18,14 @@ def launch(config_path):
     body.pack(fill="both", expand=True)
     ttk.Label(body, text="AimVision", font=("Segoe UI", 23, "bold")).pack(anchor="w")
     ttk.Label(body, text="外部截屏 · 颜色识别 · 普通鼠标输入", font=("Microsoft YaHei UI", 10)).pack(anchor="w", pady=(0, 12))
-    ttk.Label(body, text="操作顺序：启动 Aimlabs → 调色预览 → 单靶校准 → 启动控制\n控制默认暂停；切回游戏按 F8 启用，F9 随时退出。", justify="left").pack(anchor="w")
+    ttk.Label(body, text="操作顺序：启动 Aimlabs → 调色预览 → 单靶校准 → 启动控制\n切回游戏按 F8：自动点击启动，倒计时只瞄准，结束后自动射击。F9 随时退出。", justify="left").pack(anchor="w")
     form = ttk.LabelFrame(body, text="设置（更多参数在 config/local.json）", padding=12)
     form.pack(fill="x", pady=12)
     definitions = [
         ("window_title", "游戏窗口标题包含", str),
         ("horizontal_fov", "水平 FOV（与游戏实际设置一致）", float),
         ("roi_size", "截屏边长（0 = 整个客户区）", int),
-        ("capture_hz", "截屏轮询频率", int),
+        ("capture_hz", "连续截屏目标频率", int),
         ("device_idx", "显卡编号（环境检查可查看）", int),
         ("output_idx", "该显卡的显示器编号", int),
         ("mode", "移动方式", str),
@@ -84,6 +84,8 @@ def launch(config_path):
             messagebox.showinfo("基础自动校准", "进入有静止圆靶的场景，保持靶不移动。画面中可以有多个靶，程序会选择准星附近无遮挡的靶。\n\n校准不射击。切回游戏后只需按一次 F8，程序会自动完成横轴和纵轴各 3 次小幅移动并返回。\n\n整个过程请勿移动鼠标。F9 可中止。", parent=root)
         elif command == "learn":
             messagebox.showinfo("低速闭环学习", "请先完成基础校准，再进入静止圆靶任务。切回游戏按 F8 后，程序会低速瞄准并打 8 个靶。\n\n每次只移动一个轴的一小段，等待新画面后二次识别同一靶，并据此修正 X/Y 灵敏度。完成后自动保存，再使用高速控制。F9 可中止且不会保存未完成学习。", parent=root)
+        elif command == "run":
+            messagebox.showinfo("全自动高速控制", "请停留在任务的开始界面并切回游戏，只按一次 F8。\n\n程序会自动点击左键启动任务；3.1 秒倒计时期间只瞄准不射击，结束后自动连续打靶。若一次射击后目标仍存在，会持续补射直到目标消失。F9 可随时停止。", parent=root)
         args = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-B", str(ROOT / "run.py")]
         args += [command, "--config", str(config_path)]
         if command == "run":

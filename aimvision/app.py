@@ -68,6 +68,7 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
     armed_rect = None
     mouse = Mouse(lambda: controller.active and window.foreground() and window.rect() == armed_rect)
     last_frame_at, last_preview, last_error = time.perf_counter(), 0.0, ""
+    task_started = False
     title = "AimVision preview | F8 toggle in game | F9 stop | F10 snapshot"
     if not headless:
         cv2.namedWindow(title, cv2.WINDOW_NORMAL)
@@ -99,9 +100,16 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                         if tuple(cfg.calibrated_size) != size:
                             raise ValueError("Window size differs from calibration; recalibrate")
                         controller.arm()
+                        if not task_started:
+                            mouse.click(cfg.click_hold_ms)
+                            countdown_at = time.perf_counter()
+                            controller.begin_countdown(countdown_at)
+                            task_started = True
+                            log.event("start_click", countdown_ms=cfg.start_countdown_ms)
                         last_frame_at = start
-                    except ValueError as exc:
+                    except (ValueError, RuntimeError) as exc:
                         controller.pause(str(exc))
+                        mouse.release_all()
                 log.event("toggle", state=controller.state)
                 print(controller.state, flush=True)
             if controller.active and (not window.foreground() or window.rect() != armed_rect):
@@ -113,7 +121,9 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                 for prefix, name in (("Low", "hsv_low"), ("High", "hsv_high")):
                     setattr(cfg, name, [cv2.getTrackbarPos(f"{prefix} {channel}", title) for channel in ("H", "S", "V")])
             try:
+                capture_started = time.perf_counter()
                 frame = capture.grab()
+                capture_finished = time.perf_counter()
                 last_error = ""
             except RuntimeError as exc:
                 controller.pause(str(exc))
@@ -125,7 +135,9 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                     last_error = str(exc)
             if frame is not None:
                 last_frame_at = frame.timestamp
+                detection_started = time.perf_counter()
                 targets, mask = detector.detect(frame)
+                detection_finished = time.perf_counter()
                 now = time.perf_counter()
                 if controller.active and (now - frame.timestamp) * 1000 > cfg.stale_pause_ms:
                     controller.pause("desktop frame timestamp is stale")
@@ -158,7 +170,9 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                     mouse.release_all()
                     log.event("input_error", error=str(exc))
                     print(str(exc), flush=True)
-                log.frame((time.perf_counter() - frame.timestamp) * 1000, controller)
+                log.frame((time.perf_counter() - frame.timestamp) * 1000, controller,
+                          (capture_finished - capture_started) * 1000,
+                          (detection_finished - detection_started) * 1000)
                 last_frame = frame
                 if not headless and now - last_preview >= 1 / cfg.preview_hz:
                     state = controller.state if control else f"PREVIEW ONLY | targets={len(targets)}"
@@ -186,7 +200,8 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                         print(f"Saved HSV: {config_path}", flush=True)
                     except ValueError as exc:
                         print(f"Invalid HSV: {exc}", flush=True)
-            time.sleep(max(0, 1 / cfg.capture_hz - (time.perf_counter() - start)))
+            if not capture.threaded:
+                time.sleep(max(0, 1 / cfg.capture_hz - (time.perf_counter() - start)))
     finally:
         controller.pause("exit")
         try:
@@ -324,7 +339,8 @@ def calibrate(cfg, config_path):
             key = cv2.waitKey(1) & 0xff
             if key in (27, ord('q')) or cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) < 1:
                 return 0
-            time.sleep(1 / cfg.capture_hz)
+            if not capture.threaded:
+                time.sleep(1 / cfg.capture_hz)
         cfg.counts_per_radian_x = combine_samples(samples[0])
         cfg.counts_per_radian_y = combine_samples(samples[1])
         cfg.calibrated_size = list(size)
@@ -384,7 +400,8 @@ def learn(cfg, config_path):
                 log.event("pause", reason=learner.state)
             frame = capture.grab()
             if frame is None:
-                time.sleep(1 / cfg.capture_hz)
+                if not capture.threaded:
+                    time.sleep(1 / cfg.capture_hz)
                 continue
             targets, _ = detector.detect(frame)
             now = time.perf_counter()
@@ -427,7 +444,8 @@ def learn(cfg, config_path):
             key = cv2.waitKey(1) & 0xff
             if key in (27, ord('q')) or cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) < 1:
                 break
-            time.sleep(1 / cfg.capture_hz)
+            if not capture.threaded:
+                time.sleep(1 / cfg.capture_hz)
     finally:
         learner.pause("exit")
         mouse.release_all()
