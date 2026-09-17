@@ -202,6 +202,49 @@ class ControlTests(unittest.TestCase):
         self.assertFalse(controller.active)
         self.assertIn("no visual response", result.reason)
 
+    def test_ultra_combines_safe_first_move_and_click(self):
+        controller = Controller(settings(mode="direct", stable_frames=1), ultra=True)
+        controller.arm()
+        target = Target(550, 300, 100, 1200)
+        action = controller.update(frame(), [target], 1.0)
+        self.assertEqual(action.kind, "move_click")
+        self.assertGreater(action.dx, 0)
+        self.assertEqual(controller.shots, 1)
+        self.assertEqual(controller.state, "PIPELINE")
+        self.assertIsNone(controller.pending_move)
+
+    def test_ultra_falls_back_to_closed_loop_when_error_budget_exceeds_small_target(self):
+        controller = Controller(settings(mode="direct", stable_frames=1), ultra=True)
+        controller.arm()
+        target = Target(700, 300, 8, 200)
+        action = controller.update(frame(), [target], 1.0)
+        self.assertEqual(action.kind, "move")
+        self.assertEqual(controller.shots, 0)
+        self.assertIsNotNone(controller.pending_move)
+
+    def test_ultra_never_repeats_movement_on_unchanged_scene(self):
+        controller = Controller(settings(mode="direct", stable_frames=1,
+                                         ultra_response_timeout_ms=100), ultra=True)
+        controller.arm()
+        targets = [Target(550, 300, 100, 1200), Target(250, 200, 90, 1000)]
+        self.assertEqual(controller.update(frame(), targets, 1.0).kind, "move_click")
+        waiting = controller.update(frame(2, 1.05), targets, 1.05)
+        self.assertEqual(waiting.kind, "none")
+        self.assertIn("visual response", waiting.reason)
+        stopped = controller.update(frame(3, 1.11), targets, 1.11)
+        self.assertEqual(stopped.kind, "pause")
+        self.assertFalse(controller.active)
+
+    def test_ultra_replans_after_observed_scene_change(self):
+        controller = Controller(settings(mode="direct", stable_frames=1), ultra=True)
+        controller.arm()
+        first = [Target(550, 300, 100, 1200), Target(250, 200, 90, 1000)]
+        self.assertEqual(controller.update(frame(), first, 1.0).kind, "move_click")
+        changed = [Target(410, 300, 100, 1200), Target(100, 200, 90, 1000)]
+        action = controller.update(frame(2, 1.05), changed, 1.05)
+        self.assertIn(action.kind, ("click", "move_click"))
+        self.assertEqual(controller.shots, 2)
+
     def test_direct_waits_for_observed_move_instead_of_repeating_stale_input(self):
         controller = Controller(settings(mode="direct", stable_frames=1))
         controller.arm()
@@ -309,6 +352,13 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(result["shots"], 6)
             if mode == "direct":
                 self.assertLessEqual(result["moves"], result["hits"] + 2)
+
+    def test_ultra_rendered_scene_combines_move_and_shot(self):
+        result = scenario("direct", required_hits=12, ultra=True, target_radius=28)
+        stable = scenario("direct", required_hits=12, target_radius=28)
+        self.assertEqual(result["hits"], 12)
+        self.assertEqual(result["shots"], 12)
+        self.assertLess(result["simulated_seconds"], stable["simulated_seconds"])
 
     def test_low_speed_learning_remeasures_each_axis(self):
         cfg = settings(learning_hits=4, learning_settle_ms=1, shot_cooldown_ms=20,

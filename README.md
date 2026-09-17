@@ -31,6 +31,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 5. 进入有静止圆靶的场景。打开“靶场校准”，画面中可以同时有多个靶；程序会选择准星附近的完整靶，忽略枪械遮挡靶。切回游戏只按一次 F8，程序会自动执行 X/Y 各 3 次探测，共 6 次；每次小幅移动后自动反向返回。过程中不要自行移动鼠标。校准不射击，全部通过才保存。
 6. 基础校准成功后点击“低速闭环学习”，进入 Gridshot 等静止圆靶任务并按一次 **F8**。开始阶段分别移动 X/Y，每轴取得 3 个样本后自动切换为 X/Y 同步移动；可信样本增加时，增益会从 0.45 提升到 0.95，单轴步长上限从 30 提升到 180。预览状态栏会显示 `1D/2D`、当前 gain 和 cap。连续完成至少 8 个靶后保存学习结果。中途 F9 退出不会保存未完成学习。
 7. 移动方式选择 `direct`，点击“启动高速控制”，切回游戏按一次 **F8**。程序先自动单击左键启动任务；接下来的 3.1 秒只识别和移动，不会射击，倒计时结束后自动开火。高速按钮默认无预览运行，使用 X/Y 同步一步定位；只有误差超出靶半径时才根据新帧微调。再次 F8 暂停，**F9** 退出。暂停后再按 F8 只恢复当前任务，不会再次发送启动点击。`smooth` 保留加速度限制，移动会明显更慢。
+8. “启动极高速控制”使用独立的逐帧弹道循环：每个已确认变化的新画面重新选择当前最短行程目标，移动后等待 5 ms 立即开火；预算不足时自动退回移动后二次识别。它不会复用跨帧目标路线，相同画面也绝不会重复移动；输入后 250 ms 仍无画面响应会自动暂停，避免任务结束或丢失输入时连续抽搐。更换灵敏度、FOV、小靶任务或分辨率时先使用普通高速模式确认准确率。
 
 高速静止靶建议使用 `direct`；`baseline` 使用相同的直接闭环算法，`smooth` 用于观察带速度和加速度限制的轨迹。校准阶段若靶移出识别区域，减小 `calibration_probe_counts`；若测不到足够位移，可适当增大，配置限制不超过 200。
 
@@ -54,6 +55,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 .venv\Scripts\python.exe -B run.py learn
 .venv\Scripts\python.exe -B run.py run
 .venv\Scripts\python.exe -B run.py run --headless
+.venv\Scripts\python.exe -B run.py ultra --headless
 .venv\Scripts\python.exe -B run.py simulate
 .venv\Scripts\python.exe -B run.py test
 ```

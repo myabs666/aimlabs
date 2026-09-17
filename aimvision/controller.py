@@ -7,8 +7,9 @@ from .motion import Motion, pixel_angles, project_angles
 
 class Controller:
     """Pure decision logic: no OS calls, clock calls or sleeps."""
-    def __init__(self, cfg):
+    def __init__(self, cfg, ultra=False):
         self.cfg = cfg
+        self.ultra = ultra
         self.motion = Motion(cfg)
         self.shots = 0
         self.disappearances = 0  # Observations, not verified hits.
@@ -37,6 +38,8 @@ class Controller:
         self.end_guard_at = float("inf")
         self.unresponsive_moves = 0
         self.last_clicked = None
+        self.ultra_barrier = None
+        self.ultra_no_response = 0
         self.motion.reset()
 
     def arm(self):
@@ -64,7 +67,17 @@ class Controller:
 
     def _shoot(self, now, frame, reason=""):
         self.last_clicked = self.selected
-        if self.cfg.mode == "direct":
+        if self.ultra:
+            # Ultra uses a screen-change barrier instead of global pending-shot
+            # association. Recompute its route from every responsive frame.
+            self.pending_shots = []
+            self.selected = None
+            self.predicted = None
+            self.pending_move = None
+            self.moves_on_lock = 0
+            self.saved_route = []
+            self.state = "PIPELINE"
+        elif self.cfg.mode == "direct":
             position = self._global_angles(self.selected, frame)
             # A delayed retry replaces the older pending observation at the same
             # direction instead of creating two verification records.
@@ -218,6 +231,62 @@ class Controller:
         return ((yaw * self.cfg.counts_per_radian_x) ** 2 +
                 (pitch * self.cfg.counts_per_radian_y) ** 2) ** .5
 
+    def _ultra_safe(self, target, frame, dx, dy):
+        cfg = self.cfg
+        if not self.ultra or cfg.mode != "direct" or self.countdown_active or target.quality < .8:
+            return False
+        focal = frame.client_size[0] / (2 * math.tan(math.radians(cfg.horizontal_fov) / 2))
+        error_yaw = abs(dx) / cfg.counts_per_radian_x * cfg.ultra_calibration_error_fraction
+        error_pitch = abs(dy) / cfg.counts_per_radian_y * cfg.ultra_calibration_error_fraction
+        error_px = math.hypot(focal * math.tan(error_yaw),
+                              focal * math.tan(error_pitch)) + cfg.ultra_error_floor_px
+        return error_px <= target.radius * cfg.ultra_hit_radius_fraction
+
+    @staticmethod
+    def _ultra_signature(targets):
+        return [(target.x, target.y, target.radius) for target in targets]
+
+    def _ultra_scene_unchanged(self, targets):
+        """Detect a frozen/stale target layout without relying on timestamps."""
+        previous = self.ultra_barrier[0]
+        if not previous or not targets:
+            return False
+        available = list(targets)
+        matches = 0
+        for x, y, radius in previous:
+            candidate = min(available, key=lambda target: math.hypot(target.x - x, target.y - y),
+                            default=None)
+            if candidate is None:
+                continue
+            tolerance = max(4.0, min(radius, candidate.radius) * .08)
+            if math.hypot(candidate.x - x, candidate.y - y) <= tolerance:
+                matches += 1
+                available.remove(candidate)
+        required = max(1, math.ceil(min(len(previous), len(targets)) * .6))
+        return matches >= required
+
+    def _set_ultra_barrier(self, targets, now, moved):
+        self.ultra_barrier = (self._ultra_signature(targets), now, moved)
+
+    def _check_ultra_barrier(self, targets, now):
+        if self.ultra_barrier is None:
+            return None
+        _, sent_at, moved = self.ultra_barrier
+        if not self._ultra_scene_unchanged(targets):
+            self.ultra_barrier = None
+            self.ultra_no_response = 0
+            return None
+        if (now - sent_at) * 1000 < self.cfg.ultra_response_timeout_ms:
+            return Action("none", reason="ultra waiting for visual response")
+        self.ultra_barrier = None
+        self.ultra_no_response += 1
+        if moved or self.ultra_no_response >= 3:
+            self.pause("ultra input produced no visual response")
+            return Action("pause", reason=self.state)
+        # A centered click may miss without moving the scene. Permit a bounded
+        # retry; a repeated movement is never safe because it would overshoot.
+        return None
+
     def _select_next(self, targets, frame):
         return self._plan_and_select(targets, frame)
 
@@ -240,13 +309,20 @@ class Controller:
             self.countdown_active = False
             if self.selected is not None:
                 self.lock_started = now
-        if cfg.mode == "direct" and self.pending_move is None:
+        if self.ultra:
+            barrier_action = self._check_ultra_barrier(targets, now)
+            if barrier_action is not None:
+                return barrier_action
+        if cfg.mode == "direct" and not self.ultra and self.pending_move is None:
             self._observe_pending_shots(targets, frame)
         if self.state == "PIPELINE":
-            eligible = self._pipeline_eligible(targets, frame, now)
+            eligible = targets if self.ultra else self._pipeline_eligible(targets, frame, now)
             if not eligible:
                 return Action("none", reason="waiting for next pipeline target")
-            self.selected = self._select_saved(eligible, frame)
+            # Cached global routes amplify any blind-move error. Ultra replans
+            # from current pixels on every visually confirmed frame.
+            self.selected = (self._plan_and_select(eligible, frame) if self.ultra
+                             else self._select_saved(eligible, frame))
             if self.selected is None:
                 self.selected = self._plan_and_select(eligible, frame)
             self.predicted = (self.selected.x, self.selected.y)
@@ -329,6 +405,8 @@ class Controller:
                 self.state = "COUNTDOWN"
                 return Action("none", reason="countdown: aiming only")
             if self.stable >= cfg.stable_frames and (now - self.last_shot) * 1000 >= cfg.shot_cooldown_ms:
+                if self.ultra:
+                    self._set_ultra_barrier(targets, now, False)
                 return self._shoot(now, frame)
             return Action("none")
         self.stable = 0
@@ -344,8 +422,14 @@ class Controller:
                 (yaw - dx / cfg.counts_per_radian_x,
                  pitch - dy / cfg.counts_per_radian_y),
                 frame.center, frame.client_size[0], cfg.horizontal_fov)
-            self.pending_move = (self.selected, self.predicted, now)
             self.moves_on_lock += 1
+            if self.moves_on_lock == 1 and self._ultra_safe(self.selected, frame, dx, dy):
+                self._set_ultra_barrier(targets, now, True)
+                shot = self._shoot(now, frame, "ultra predicted shot")
+                self.view_angles[0] += dx / cfg.counts_per_radian_x
+                self.view_angles[1] += dy / cfg.counts_per_radian_y
+                return Action("move_click", dx, dy, shot.reason)
+            self.pending_move = (self.selected, self.predicted, now)
             self.view_angles[0] += dx / cfg.counts_per_radian_x
             self.view_angles[1] += dy / cfg.counts_per_radian_y
             self.state = "WAIT_MOVE"

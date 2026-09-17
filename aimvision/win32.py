@@ -174,6 +174,14 @@ class Mouse:
             time.sleep(remaining)
         self.release_all()
 
+    def move_click(self, dx, dy, hold_ms, delay_ms=0):
+        # Separate SendInput calls still enter the same Win32 input queue in order;
+        # a short delay gives the game an input tick to apply camera movement.
+        self.move(dx, dy)
+        if delay_ms:
+            time.sleep(delay_ms / 1000)
+        self.click(hold_ms)
+
     def tick(self):
         if self.held and time.perf_counter() >= self.release_at:
             self.release_all()

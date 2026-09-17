@@ -86,9 +86,11 @@ def launch(config_path):
             messagebox.showinfo("低速闭环学习", "请先完成基础校准，再进入静止圆靶任务。切回游戏按 F8 后，程序会低速瞄准并打 8 个靶。\n\n每次只移动一个轴的一小段，等待新画面后二次识别同一靶，并据此修正 X/Y 灵敏度。完成后自动保存，再使用高速控制。F9 可中止且不会保存未完成学习。", parent=root)
         elif command == "run":
             messagebox.showinfo("全自动高速控制", "请停留在任务的开始界面并切回游戏，只按一次 F8。\n\n程序会自动点击左键启动任务；3.1 秒倒计时期间只瞄准不射击，结束后自动连续打靶。若一次射击后目标仍存在，会持续补射直到目标消失。F9 可随时停止。", parent=root)
+        elif command == "ultra":
+            messagebox.showinfo("极高速控制（实验）", "该模式使用独立的逐帧弹道循环：每个发生变化的新画面重新选靶，移动后短暂等待输入生效并立即开火。相同画面不会重复移动，连续无视觉响应会自动暂停。\n\n它可能比高速模式更快，也可能因灵敏度、FOV 或小靶误差降低准确率。当前高速模式不会被修改。切回游戏按一次 F8，F9 随时停止。", parent=root)
         args = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-B", str(ROOT / "run.py")]
         args += [command, "--config", str(config_path)]
-        if command == "run":
+        if command in ("run", "ultra"):
             args.append("--headless")
         current_log = local_path(f"logs/launcher-{datetime.now():%Y%m%d-%H%M%S-%f}.txt")
         current_log.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +116,8 @@ def launch(config_path):
 
     buttons = [("保存设置", save), ("环境检查", lambda: start("doctor")), ("调色预览", lambda: start("tune")),
                ("基础自动校准", lambda: start("calibrate")), ("低速闭环学习", lambda: start("learn")),
-               ("启动高速控制", lambda: start("run")), ("停止", stop)]
+               ("启动高速控制", lambda: start("run")), ("启动极高速控制", lambda: start("ultra")),
+               ("停止", stop)]
     for i, (label, callback) in enumerate(buttons):
         ttk.Button(toolbar, text=label, command=callback).grid(row=i // 3, column=i % 3, sticky="ew", padx=3, pady=3)
     for i in range(3):

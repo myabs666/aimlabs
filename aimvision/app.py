@@ -52,7 +52,7 @@ def doctor(cfg, capture_test=False):
     return 0
 
 
-def live(cfg, config_path, control=False, tune=False, headless=False):
+def live(cfg, config_path, control=False, tune=False, headless=False, ultra=False):
     import cv2
     from .win32 import dpi_aware, Keys, Mouse
     from .capture import Capture
@@ -61,7 +61,7 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
     from .telemetry import Telemetry
     dpi_aware()
     window = choose_window(cfg)
-    detector, controller, keys = Detector(cfg), Controller(cfg), Keys()
+    detector, controller, keys = Detector(cfg), Controller(cfg, ultra=ultra), Keys()
     capture = Capture(cfg, window)
     log = Telemetry("control" if control else "preview")
     # The guard is checked immediately before each injected event.
@@ -81,7 +81,8 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
     print("Ready. F8 toggles control only while Aimlabs is foreground. F9 exits. F10 saves a project-local snapshot.", flush=True)
     if not control:
         print("PREVIEW ONLY: mouse input disabled. Tune mode: press S in preview to save HSV.", flush=True)
-    log.event("start", control=control, mode=cfg.mode, config=str(config_path), window=window.title)
+    log.event("start", control=control, mode=cfg.mode, ultra=ultra,
+              config=str(config_path), window=window.title)
     last_frame = None
     try:
         while True:
@@ -152,6 +153,11 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                     if action.kind == "move":
                         mouse.move(action.dx, action.dy)
                         controller.wait_until = time.perf_counter() + cfg.move_settle_ms / 1000
+                    elif action.kind == "move_click":
+                        mouse.move_click(action.dx, action.dy, cfg.click_hold_ms,
+                                         cfg.ultra_move_click_delay_ms)
+                        controller.last_shot = time.perf_counter()
+                        controller.wait_until = controller.last_shot + cfg.shot_cooldown_ms / 1000
                     elif action.kind == "click":
                         mouse.click(cfg.click_hold_ms)
                         controller.last_shot = time.perf_counter()
@@ -160,15 +166,16 @@ def live(cfg, config_path, control=False, tune=False, headless=False):
                         mouse.release_all()
                     if action.kind != "none":
                         detail = {}
-                        detail_target = (controller.last_clicked if action.kind == "click"
+                        detail_target = (controller.last_clicked if action.kind in ("click", "move_click")
                                          else controller.selected)
                         if detail_target is not None:
                             detail["target"] = [detail_target.x, detail_target.y,
                                                 detail_target.radius]
                         if controller.predicted is not None:
                             detail["predicted"] = list(controller.predicted)
-                        if action.kind == "move":
-                            detail["move_number"] = controller.moves_on_lock
+                        if action.kind in ("move", "move_click"):
+                            detail["move_number"] = (1 if action.kind == "move_click"
+                                                     else controller.moves_on_lock)
                         detail["route_remaining"] = len(controller.saved_route)
                         detail["pending_results"] = len(controller.pending_shots)
                         log.event(action.kind, dx=action.dx, dy=action.dy, state=controller.state,
@@ -467,7 +474,7 @@ def learn(cfg, config_path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="AimVision — external capture and ordinary mouse control")
-    parser.add_argument("command", nargs="?", default="gui", choices=["gui", "doctor", "preview", "tune", "calibrate", "learn", "run", "simulate", "test"])
+    parser.add_argument("command", nargs="?", default="gui", choices=["gui", "doctor", "preview", "tune", "calibrate", "learn", "run", "ultra", "simulate", "test"])
     parser.add_argument("--config", default="config/local.json")
     parser.add_argument("--headless", action="store_true", help="Hide control preview (run only)")
     parser.add_argument("--capture-test", action="store_true", help="doctor: capture one desktop frame without saving pixels")
@@ -492,14 +499,16 @@ def main(argv=None):
         if args.command == "doctor":
             with live_session():
                 return doctor(cfg, args.capture_test)
-        if args.headless and args.command != "run":
-            raise ValueError("--headless is only supported by run")
+        if args.headless and args.command not in ("run", "ultra"):
+            raise ValueError("--headless is only supported by run/ultra")
         with live_session():
             if args.command == "calibrate":
                 return calibrate(cfg, path)
             if args.command == "learn":
                 return learn(cfg, path)
-            return live(cfg, path, control=args.command == "run", tune=args.command == "tune", headless=args.headless)
+            return live(cfg, path, control=args.command in ("run", "ultra"),
+                        tune=args.command == "tune", headless=args.headless,
+                        ultra=args.command == "ultra")
     except KeyboardInterrupt:
         return 130
     except Exception as exc:

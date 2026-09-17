@@ -45,3 +45,12 @@ class WindowsInputTests(unittest.TestCase):
             mouse.click(2)
         self.assertEqual([call.args[0] for call in send.call_args_list], [0x0002, 0x0004])
         self.assertFalse(mouse.held)
+
+    def test_move_click_queues_movement_before_button_events(self):
+        from aimvision.win32 import Mouse, user32
+        mouse = Mouse(lambda: True)
+        with patch.object(user32, 'GetAsyncKeyState', return_value=0), \
+                patch.object(mouse, '_send') as send, patch('aimvision.win32.time.sleep'):
+            mouse.move_click(123, -45, 2, 5)
+        self.assertEqual([call.args for call in send.call_args_list],
+                         [(0x0001, 123, -45), (0x0002,), (0x0004,)])

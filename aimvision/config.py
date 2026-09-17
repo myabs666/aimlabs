@@ -66,6 +66,11 @@ class Config:
     planned_targets: int = 3
     end_guard_after_ms: float = 60000.0
     end_guard_move_failures: int = 3
+    ultra_calibration_error_fraction: float = 0.10
+    ultra_error_floor_px: float = 6.0
+    ultra_hit_radius_fraction: float = 0.95
+    ultra_move_click_delay_ms: float = 5.0
+    ultra_response_timeout_ms: float = 250.0
     result_timeout_ms: float = 350.0
     ghost_ms: float = 120.0
     lock_distance_px: float = 80.0
@@ -99,7 +104,7 @@ class Config:
                 raise ValueError("Invalid HSV bounds (H: 0..179; S,V: 0..255)")
         if not 0 < self.min_area < self.max_area or not 10 < self.horizontal_fov < 170:
             raise ValueError("Invalid target area / horizontal FOV")
-        for name in ("min_circularity", "min_fill", "learning_gain", "learning_fast_gain", "gain", "direct_correction_gain", "aim_radius_fraction", "post_move_match_radius_fraction"):
+        for name in ("min_circularity", "min_fill", "learning_gain", "learning_fast_gain", "gain", "direct_correction_gain", "aim_radius_fraction", "post_move_match_radius_fraction", "ultra_calibration_error_fraction", "ultra_hit_radius_fraction"):
             if not 0 < getattr(self, name) <= 1:
                 raise ValueError(f"{name} must be in (0,1]")
         if not (0 <= self.exclude_top_fraction < .4 and 0 <= self.exclude_bottom_fraction < .4):
@@ -110,7 +115,7 @@ class Config:
             raise ValueError("Calibration counts must be non-negative")
         if len(self.calibrated_size) != 2 or any(type(v) is not int or v < 0 for v in self.calibrated_size):
             raise ValueError("Invalid calibrated_size")
-        for name in ("max_speed", "max_acceleration", "max_step_counts", "learning_hits", "learning_max_step_counts", "learning_fast_max_step_counts", "learning_settle_ms", "learning_stall_timeout_ms", "stable_frames", "max_shots_per_target", "planned_targets", "end_guard_move_failures", "lock_distance_px", "lock_timeout_ms", "post_move_timeout_ms", "move_settle_ms", "max_frame_age_ms", "stale_pause_ms", "click_hold_ms", "shot_cooldown_ms", "repeat_fire_interval_ms", "start_countdown_ms", "end_guard_after_ms", "result_timeout_ms", "ghost_ms", "calibration_probe_counts", "calibration_settle_ms"):
+        for name in ("max_speed", "max_acceleration", "max_step_counts", "learning_hits", "learning_max_step_counts", "learning_fast_max_step_counts", "learning_settle_ms", "learning_stall_timeout_ms", "stable_frames", "max_shots_per_target", "planned_targets", "end_guard_move_failures", "lock_distance_px", "lock_timeout_ms", "post_move_timeout_ms", "move_settle_ms", "max_frame_age_ms", "stale_pause_ms", "click_hold_ms", "shot_cooldown_ms", "repeat_fire_interval_ms", "start_countdown_ms", "end_guard_after_ms", "ultra_error_floor_px", "ultra_move_click_delay_ms", "ultra_response_timeout_ms", "result_timeout_ms", "ghost_ms", "calibration_probe_counts", "calibration_settle_ms"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         if (self.shot_cooldown_ms < self.click_hold_ms or
