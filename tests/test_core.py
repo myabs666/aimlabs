@@ -213,14 +213,14 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(controller.state, "PIPELINE")
         self.assertIsNone(controller.pending_move)
 
-    def test_ultra_falls_back_to_closed_loop_when_error_budget_exceeds_small_target(self):
+    def test_ultra_uses_ballistic_shot_at_any_distance_for_intact_target(self):
         controller = Controller(settings(mode="direct", stable_frames=1), ultra=True)
         controller.arm()
         target = Target(700, 300, 8, 200)
         action = controller.update(frame(), [target], 1.0)
-        self.assertEqual(action.kind, "move")
-        self.assertEqual(controller.shots, 0)
-        self.assertIsNotNone(controller.pending_move)
+        self.assertEqual(action.kind, "move_click")
+        self.assertEqual(controller.shots, 1)
+        self.assertIsNone(controller.pending_move)
 
     def test_ultra_never_repeats_movement_on_unchanged_scene(self):
         controller = Controller(settings(mode="direct", stable_frames=1,
@@ -244,6 +244,18 @@ class ControlTests(unittest.TestCase):
         action = controller.update(frame(2, 1.05), changed, 1.05)
         self.assertIn(action.kind, ("click", "move_click"))
         self.assertEqual(controller.shots, 2)
+        self.assertEqual(controller.ultra_move_click_delay_ms, 40)
+        self.assertEqual(controller.ultra_timing_misses, 1)
+
+    def test_ultra_keeps_timing_after_a_successful_ballistic_shot(self):
+        controller = Controller(settings(mode="direct", stable_frames=1), ultra=True)
+        controller.arm()
+        first = [Target(550, 300, 100, 1200), Target(250, 200, 90, 1000)]
+        self.assertEqual(controller.update(frame(), first, 1.0).kind, "move_click")
+        changed = [Target(650, 450, 100, 1200), Target(100, 200, 90, 1000)]
+        controller.update(frame(2, 1.05), changed, 1.05)
+        self.assertEqual(controller.ultra_move_click_delay_ms, 35)
+        self.assertEqual(controller.ultra_timing_misses, 0)
 
     def test_direct_waits_for_observed_move_instead_of_repeating_stale_input(self):
         controller = Controller(settings(mode="direct", stable_frames=1))

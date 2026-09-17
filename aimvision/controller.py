@@ -40,6 +40,8 @@ class Controller:
         self.last_clicked = None
         self.ultra_barrier = None
         self.ultra_no_response = 0
+        self.ultra_move_click_delay_ms = self.cfg.ultra_move_click_delay_ms
+        self.ultra_timing_misses = 0
         self.motion.reset()
 
     def arm(self):
@@ -54,7 +56,9 @@ class Controller:
         self.fire_enabled_at = now + self.cfg.start_countdown_ms / 1000
         self.countdown_active = True
         self.end_guard_at = self.fire_enabled_at + self.cfg.end_guard_after_ms / 1000
-        self.wait_until = now + max(self.cfg.click_hold_ms, self.cfg.shot_cooldown_ms) / 1000
+        post_click_wait = (self.cfg.ultra_post_click_wait_ms if self.ultra
+                           else max(self.cfg.click_hold_ms, self.cfg.shot_cooldown_ms))
+        self.wait_until = now + post_click_wait / 1000
         self.state = "COUNTDOWN"
 
     def set_end_guard(self, timestamp):
@@ -92,7 +96,9 @@ class Controller:
         else:
             self.state = "WAIT_RESULT"
         self.last_shot = now
-        self.wait_until = now + max(self.cfg.click_hold_ms, self.cfg.shot_cooldown_ms) / 1000
+        post_click_wait = (self.cfg.ultra_post_click_wait_ms if self.ultra
+                           else max(self.cfg.click_hold_ms, self.cfg.shot_cooldown_ms))
+        self.wait_until = now + post_click_wait / 1000
         self.attempts += 1
         self.shots += 1
         self.stable = 0
@@ -232,15 +238,12 @@ class Controller:
                 (pitch * self.cfg.counts_per_radian_y) ** 2) ** .5
 
     def _ultra_safe(self, target, frame, dx, dy):
-        cfg = self.cfg
-        if not self.ultra or cfg.mode != "direct" or self.countdown_active or target.quality < .8:
-            return False
-        focal = frame.client_size[0] / (2 * math.tan(math.radians(cfg.horizontal_fov) / 2))
-        error_yaw = abs(dx) / cfg.counts_per_radian_x * cfg.ultra_calibration_error_fraction
-        error_pitch = abs(dy) / cfg.counts_per_radian_y * cfg.ultra_calibration_error_fraction
-        error_px = math.hypot(focal * math.tan(error_yaw),
-                              focal * math.tan(error_pitch)) + cfg.ultra_error_floor_px
-        return error_px <= target.radius * cfg.ultra_hit_radius_fraction
+        # This mode deliberately favors throughput. A fresh, intact contour is
+        # fired ballistically at any travel distance; the next changed frame
+        # supplies correction and timing feedback. Stable mode keeps the full
+        # post-move accuracy gate.
+        return (self.ultra and self.cfg.mode == "direct" and
+                not self.countdown_active and target.quality >= .8)
 
     @staticmethod
     def _ultra_signature(targets):
@@ -265,14 +268,24 @@ class Controller:
         required = max(1, math.ceil(min(len(previous), len(targets)) * .6))
         return matches >= required
 
-    def _set_ultra_barrier(self, targets, now, moved):
-        self.ultra_barrier = (self._ultra_signature(targets), now, moved)
+    def _set_ultra_barrier(self, targets, now, moved, target_radius):
+        self.ultra_barrier = (self._ultra_signature(targets), now, moved, target_radius)
 
-    def _check_ultra_barrier(self, targets, now):
+    def _check_ultra_barrier(self, targets, frame, now):
         if self.ultra_barrier is None:
             return None
-        _, sent_at, moved = self.ultra_barrier
+        _, sent_at, moved, target_radius = self.ultra_barrier
         if not self._ultra_scene_unchanged(targets):
+            if moved and targets:
+                centered = min(targets, key=lambda target: target.distance(frame.center))
+                same_size = .65 <= centered.radius / max(1.0, target_radius) <= 1.35
+                if same_size and centered.distance(frame.center) <= max(8.0, target_radius * .65):
+                    # Camera movement landed, but the target survived: the click
+                    # reached the game before its view update. Increase only;
+                    # score runs should not oscillate around the timing boundary.
+                    self.ultra_move_click_delay_ms = min(
+                        60.0, self.ultra_move_click_delay_ms + 5.0)
+                    self.ultra_timing_misses += 1
             self.ultra_barrier = None
             self.ultra_no_response = 0
             return None
@@ -310,7 +323,7 @@ class Controller:
             if self.selected is not None:
                 self.lock_started = now
         if self.ultra:
-            barrier_action = self._check_ultra_barrier(targets, now)
+            barrier_action = self._check_ultra_barrier(targets, frame, now)
             if barrier_action is not None:
                 return barrier_action
         if cfg.mode == "direct" and not self.ultra and self.pending_move is None:
@@ -406,7 +419,7 @@ class Controller:
                 return Action("none", reason="countdown: aiming only")
             if self.stable >= cfg.stable_frames and (now - self.last_shot) * 1000 >= cfg.shot_cooldown_ms:
                 if self.ultra:
-                    self._set_ultra_barrier(targets, now, False)
+                    self._set_ultra_barrier(targets, now, False, self.selected.radius)
                 return self._shoot(now, frame)
             return Action("none")
         self.stable = 0
@@ -424,7 +437,7 @@ class Controller:
                 frame.center, frame.client_size[0], cfg.horizontal_fov)
             self.moves_on_lock += 1
             if self.moves_on_lock == 1 and self._ultra_safe(self.selected, frame, dx, dy):
-                self._set_ultra_barrier(targets, now, True)
+                self._set_ultra_barrier(targets, now, True, self.selected.radius)
                 shot = self._shoot(now, frame, "ultra predicted shot")
                 self.view_angles[0] += dx / cfg.counts_per_radian_x
                 self.view_angles[1] += dy / cfg.counts_per_radian_y

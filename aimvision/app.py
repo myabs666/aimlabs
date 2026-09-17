@@ -155,13 +155,16 @@ def live(cfg, config_path, control=False, tune=False, headless=False, ultra=Fals
                         controller.wait_until = time.perf_counter() + cfg.move_settle_ms / 1000
                     elif action.kind == "move_click":
                         mouse.move_click(action.dx, action.dy, cfg.click_hold_ms,
-                                         cfg.ultra_move_click_delay_ms)
+                                         controller.ultra_move_click_delay_ms)
                         controller.last_shot = time.perf_counter()
-                        controller.wait_until = controller.last_shot + cfg.shot_cooldown_ms / 1000
+                        controller.wait_until = (controller.last_shot +
+                                                 cfg.ultra_post_click_wait_ms / 1000)
                     elif action.kind == "click":
                         mouse.click(cfg.click_hold_ms)
                         controller.last_shot = time.perf_counter()
-                        controller.wait_until = controller.last_shot + cfg.shot_cooldown_ms / 1000
+                        post_click_wait = (cfg.ultra_post_click_wait_ms if ultra
+                                           else cfg.shot_cooldown_ms)
+                        controller.wait_until = controller.last_shot + post_click_wait / 1000
                     elif action.kind == "pause":
                         mouse.release_all()
                     if action.kind != "none":
@@ -176,6 +179,9 @@ def live(cfg, config_path, control=False, tune=False, headless=False, ultra=Fals
                         if action.kind in ("move", "move_click"):
                             detail["move_number"] = (1 if action.kind == "move_click"
                                                      else controller.moves_on_lock)
+                        if ultra:
+                            detail["move_click_delay_ms"] = controller.ultra_move_click_delay_ms
+                            detail["timing_misses"] = controller.ultra_timing_misses
                         detail["route_remaining"] = len(controller.saved_route)
                         detail["pending_results"] = len(controller.pending_shots)
                         log.event(action.kind, dx=action.dx, dy=action.dy, state=controller.state,
