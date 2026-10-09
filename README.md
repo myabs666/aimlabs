@@ -4,6 +4,10 @@ Windows 上针对 Aimlabs 静止圆靶的外部视觉自动打靶原型。使用
 
 **默认只预览或暂停。自动控制必须先完成校准，再切回游戏按 F8 启用。F9 退出。** 平滑移动用于减少抖动，不代表避免检测。
 
+## 发布版本
+
+当前整理版本为 **v0.1.0**。Windows 用户可从 [GitHub Releases](https://github.com/myabs666/aimlabs/releases/tag/v0.1.0) 下载 `AimVision-v0.1.0-windows-x64.zip`，解压后保留完整 `AimlabVision` 目录并运行其中的 `AimlabVision.exe`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 启动
 
 已构建时，双击 `dist/AimlabVision/AimlabVision.exe`。必须保留同目录 `_internal`，这是目录式打包，不是单文件 EXE。
@@ -103,13 +107,13 @@ dist/               目录式 EXE
 
 所有应用输出路径均限制在工程内；传入工程外 `--config` 会报错。复制完整 EXE 文件夹到新位置时，它会在该文件夹内创建自己的配置与运行目录。在当前工程内运行打包版时，继续使用工程根目录的配置和日志。
 
-项目内 `temp/` 的参考截图可重新分析：
+如需分析自己的参考截图，可将图片放入不会提交到 Git 的 `temp/` 目录：
 
 ```powershell
 .venv\Scripts\python.exe -B scripts\analyze_references.py
 ```
 
-逐张标注图、颜色掩膜和坐标报告写入 `artifacts/reference-analysis/`。当前六张青色大圆靶截图无需训练神经网络；颜色、圆形几何、距离变换已能处理普通靶、枪械遮挡靶和两个相接的靶。
+逐张标注图、颜色掩膜和坐标报告写入 `artifacts/reference-analysis/`。颜色、圆形几何和距离变换可处理普通靶、枪械遮挡靶和两个相接的靶；参考截图与分析产物均不进入源码提交。
 
 ## 验证与打包
 
@@ -122,3 +126,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 离线测试覆盖新旧帧、校准、目标保持、有限重试、尺寸变化、颜色识别和两种控制模式的合成场景收敛。它不能替代游戏内命中率、真实输入兼容性或防检测验证。
 
 来源与复用范围见 [docs/REFERENCES.md](docs/REFERENCES.md)。
+
+## 贡献与许可证
+
+贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。本项目使用 [MIT License](LICENSE)。

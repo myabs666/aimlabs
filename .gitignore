@@ -9,6 +9,7 @@ __pycache__/
 *.spec
 build/
 dist/
+release/
 logs/
 artifacts/
 temp/
